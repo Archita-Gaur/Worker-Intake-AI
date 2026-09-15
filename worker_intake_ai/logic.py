@@ -3,11 +3,14 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import copy
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional
 
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
+from .research import export_research_markdown, normalize_research
 
 MAX_FILE_BYTES = 500_000
 MAX_TEXT_CHARS = 20_000
@@ -204,11 +207,21 @@ def make_finding_id(topic: str, source_type: str, source_location: str, exact_qu
         ensure_ascii=False,
         separators=(",", ":"),
     )
-    digest = hashlib.md5(text.encode("utf-8")).hexdigest()[:12]
-    return f"finding-{digest}"
+    # UUID5 is a real UUID while remaining stable for imported/fixture rows.
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, "worker-intake-finding:" + text))
 
 
-def evaluate_quote_validation_status(quote: str, source_text: str) -> str:
+def make_unique_finding_id() -> str:
+    """Create a new identity for a manually added finding."""
+    return str(uuid.uuid4())
+
+
+def make_source_id(source_type: str, source_name: str = "") -> str:
+    """Return a stable UUID for a source, independent of finding edits."""
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"worker-intake-source:{source_type}:{source_name}"))
+
+
+def evaluate_quote_validation_status(quote: str, source_text: str, source_location: str = "") -> str:
     if not quote or not quote.strip():
         return "Not checked"
     normalized_quote = normalize_whitespace(quote)
@@ -218,6 +231,37 @@ def evaluate_quote_validation_status(quote: str, source_text: str) -> str:
     if normalized_quote in normalized_source:
         return "Match found"
     return "Match not found"
+
+
+def validate_source(row: Dict[str, Any], document_text: str, pages: Optional[List[str]] = None) -> Dict[str, Any]:
+    """Validate the document and the cited location separately.
+
+    A quote can be present in the document while its page/paragraph citation is
+    wrong; those are deliberately different results for staff review.
+    """
+    quote = row.get("exact_quote", "")
+    location = normalize_whitespace(row.get("source_location", ""))
+    document_status = evaluate_quote_validation_status(quote, document_text, location)
+    location_status = "Not checked"
+    if location:
+        location_status = "Match found" if _location_contains_quote(location, quote, document_text, pages or []) else "Match not found"
+    return {
+        "document_validation_status": document_status,
+        "location_validation_status": location_status,
+        "quote_validation_status": document_status,
+    }
+
+
+def _location_contains_quote(location: str, quote: str, document_text: str, pages: List[str]) -> bool:
+    import re
+    match = re.search(r"(?:page|p\.?)\s*(\d+)", location, re.IGNORECASE)
+    if match and pages:
+        page_number = int(match.group(1))
+        return 1 <= page_number <= len(pages) and normalize_whitespace(quote) in normalize_whitespace(pages[page_number - 1])
+    # Text sources commonly use paragraph/answer labels rather than pages.
+    # Require both the location label and quote to be present.
+    normalized_document = normalize_whitespace(document_text).lower()
+    return normalize_whitespace(location).lower() in normalized_document and normalize_whitespace(quote).lower() in normalized_document
 
 
 def get_source_text_for_row(
@@ -338,6 +382,31 @@ def record_edit_history(
     return history
 
 
+def update_finding(
+    rows: Iterable[Dict[str, Any]],
+    finding_id: str,
+    changes: Dict[str, Any],
+    actor: Optional[str] = None,
+    actor_type: str = "human",
+) -> List[Dict[str, Any]]:
+    """Apply one atomic finding update, recording each genuine change once."""
+    updated_rows = [copy.deepcopy(ensure_review_row(row)) for row in rows]
+    for index, row in enumerate(updated_rows):
+        if row.get("finding_id") != finding_id:
+            continue
+        previous = copy.deepcopy(row)
+        candidate = copy.deepcopy(row)
+        candidate.update(changes)
+        candidate["field"] = candidate.get("topic", candidate.get("field", ""))
+        candidate["finding_id"] = finding_id
+        candidate["edit_history"] = record_edit_history(
+            previous, candidate, actor, event_type="human_edit", actor_type=actor_type
+        )
+        updated_rows[index] = candidate
+        return updated_rows
+    return updated_rows
+
+
 def is_empty_finding(row: Dict[str, Any]) -> bool:
     topic = (row.get("topic") or row.get("field") or "").strip()
     if topic:
@@ -350,7 +419,7 @@ def is_empty_finding(row: Dict[str, Any]) -> bool:
     return not any([exact_quote, source_location, interpretation, follow_up_question, evidence_to_request])
 
 
-def extract_text_from_file(file_name: str, file_bytes: bytes) -> str:
+def extract_document_pages(file_name: str, file_bytes: bytes) -> List[str]:
     if not file_name:
         raise ValueError("A file name is required.")
     lowered = file_name.lower()
@@ -365,7 +434,7 @@ def extract_text_from_file(file_name: str, file_bytes: bytes) -> str:
             raise ValueError(f"Text exceeds {MAX_TEXT_CHARS} characters. Please use a shorter excerpt.")
         if not text.strip():
             raise ValueError("The uploaded text file is empty.")
-        return text.strip()
+        return [text.strip()]
     if lowered.endswith(".pdf"):
         if len(file_bytes) > MAX_FILE_BYTES:
             raise ValueError(f"Document exceeds {MAX_FILE_BYTES} bytes. Please use a shorter excerpt.")
@@ -376,24 +445,39 @@ def extract_text_from_file(file_name: str, file_bytes: bytes) -> str:
         if len(reader.pages) > MAX_PAGES:
             raise ValueError(f"PDF exceeds {MAX_PAGES} pages. Please use a shorter excerpt.")
         parts: List[str] = []
-        for page in reader.pages:
-            page_text = page.extract_text() or ""
+        unreadable_pages: List[int] = []
+        for page_number, page in enumerate(reader.pages, start=1):
+            try:
+                page_text = page.extract_text() or ""
+            except Exception:
+                page_text = ""
             if page_text.strip():
-                parts.append(page_text)
+                parts.append(page_text.strip())
+            else:
+                unreadable_pages.append(page_number)
+        if unreadable_pages:
+            raise ValueError(
+                "Unreadable PDF page(s): " + ", ".join(map(str, unreadable_pages)) +
+                ". OCR is not implemented; upload a text-readable PDF."
+            )
         combined = "\n".join(parts).strip()
         if not combined:
             raise ValueError("This PDF has no extractable text. OCR is not implemented for scanned or image-only PDFs.")
         if len(combined) > MAX_TEXT_CHARS:
             raise ValueError(f"Extracted text exceeds {MAX_TEXT_CHARS} characters. Please use a shorter excerpt.")
-        return combined
+        return parts
     raise ValueError("Unsupported document type. Upload a TXT or PDF file.")
+
+
+def extract_text_from_file(file_name: str, file_bytes: bytes) -> str:
+    return "\n".join(extract_document_pages(file_name, file_bytes)).strip()
 
 
 def prediction_status() -> str:
     return "Not available: model development and validation pending."
 
 
-def export_review_markdown(findings: Iterable[Dict[str, Any]]) -> str:
+def export_review_markdown(findings: Iterable[Dict[str, Any]], research: Optional[Dict[str, Any]] = None) -> str:
     rows = [ensure_review_row(row) for row in findings if row]
     exportable_rows = [row for row in rows if not is_empty_finding(row)]
     reviewed_rows = [row for row in exportable_rows if row.get("review_status") in {"Reviewed", "Corrected"}]
@@ -430,6 +514,8 @@ def export_review_markdown(findings: Iterable[Dict[str, Any]]) -> str:
 
     lines.append("## Prediction")
     lines.append(prediction_status())
+    if research is not None:
+        lines.extend(["", export_research_markdown(research)])
     return "\n".join(lines)
 
 
@@ -456,6 +542,7 @@ def export_review_json(
     findings: Iterable[Dict[str, Any]],
     intake_answers: Optional[Dict[str, Any]] = None,
     synthetic_demo: bool = True,
+    research: Optional[Dict[str, Any]] = None,
 ) -> str:
     rows = [ensure_review_row(row) for row in findings if row]
     sanitized_rows = [row for row in rows if not is_empty_finding(row)]
@@ -472,15 +559,23 @@ def export_review_json(
         "findings": sanitized_rows,
         "export_timestamp": datetime.now(timezone.utc).isoformat(),
     }
+    if research is not None:
+        export_payload["research"] = normalize_research(research)
     return json.dumps(export_payload, indent=2, ensure_ascii=False)
 
 
 def ensure_review_row(row: Dict[str, Any]) -> Dict[str, Any]:
-    sanitized = dict(row)
+    sanitized = copy.deepcopy(row)
     sanitized.setdefault("topic", sanitized.get("field") or "")
     sanitized.setdefault("field", sanitized.get("topic") or "")
-    sanitized.setdefault("finding_id", make_finding_id(sanitized.get("topic", ""), sanitized.get("source_type", "Unknown"), sanitized.get("source_location", ""), sanitized.get("exact_quote", "")))
+    existing_id = sanitized.get("finding_id")
+    try:
+        uuid.UUID(str(existing_id))
+    except (ValueError, TypeError, AttributeError):
+        sanitized["finding_id"] = make_finding_id(sanitized.get("topic", ""), sanitized.get("source_type", "Unknown"), sanitized.get("source_location", ""), sanitized.get("exact_quote", ""))
     sanitized.setdefault("source_type", "Unknown")
+    sanitized.setdefault("source_id", make_source_id(sanitized.get("source_type", "Unknown"), sanitized.get("source_name", "")))
+    sanitized.setdefault("source_name", "")
     sanitized.setdefault("creation_method", "manual")
     sanitized.setdefault("exact_quote", "")
     sanitized.setdefault("source_location", "")
@@ -490,8 +585,24 @@ def ensure_review_row(row: Dict[str, Any]) -> Dict[str, Any]:
     sanitized.setdefault("follow_up_question", "")
     sanitized.setdefault("evidence_to_request", "")
     sanitized.setdefault("quote_validation_status", "Not checked")
+    sanitized.setdefault("document_validation_status", sanitized.get("quote_validation_status", "Not checked"))
+    sanitized.setdefault("location_validation_status", "Not checked")
     sanitized.setdefault("migration_note", None)
     sanitized.setdefault("legacy_original_value", None)
+    sanitized["research"] = normalize_research(sanitized.get("research"))
+    for field_name, allowed, fallback, legacy_name in (
+        ("source_type", SOURCE_TYPES, "Unknown", "legacy_original_source_type"),
+        ("information_status", INFORMATION_STATUSES, "Unknown", "legacy_original_information_status"),
+        ("review_status", REVIEW_STATUSES, "Unreviewed", "legacy_original_review_status"),
+    ):
+        value = sanitized.get(field_name)
+        if value not in allowed:
+            sanitized.setdefault(legacy_name, value)
+            sanitized[field_name] = fallback
+            sanitized["migration_note"] = (
+                sanitized.get("migration_note")
+                or f"Legacy {field_name} preserved during migration; review the visible normalized value."
+            )
     if "edit_history" not in sanitized:
         sanitized["edit_history"] = []
     elif sanitized["edit_history"] is None:
@@ -583,6 +694,7 @@ def generate_title_vii_blank_form() -> Dict[str, Any]:
         "dates_or_approximate_dates": "",
         "people_involved": "",
         "why_worker_believes_treatment_was_discriminatory": "",
+        "reported_basis": [],
         "worker_reported_basis": [],
         "worker_reported_basis_text": "",
         "relevant_statements_witnesses_documents": "",
@@ -597,9 +709,14 @@ def generate_title_vii_blank_form() -> Dict[str, Any]:
         "retaliation_what_when": "",
         "retaliation_who_knew": "",
         "retaliation_after_effect": "",
+        "retaliation_protected_activity": "",
+        "retaliation_date": "",
         "agency_contact_charge": "",
         "agency_notice_date": "",
         "available_documents": "",
+        "agency_contact_type": "",
+        "agency_contact_date": "",
+        "charge_number": "",
         "visible_reminder": "Filing deadlines require prompt staff review.",
         "other_legal_issues_for_review": "",
     }

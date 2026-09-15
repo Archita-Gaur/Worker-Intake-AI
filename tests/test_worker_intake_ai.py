@@ -1,4 +1,7 @@
 import json
+import uuid
+
+import pytest
 
 from worker_intake_ai.logic import (
     INFORMATION_STATUSES,
@@ -14,10 +17,20 @@ from worker_intake_ai.logic import (
     generate_title_vii_blank_form,
     intake_allows_missing_documents_or_comparator,
     migrate_legacy_row,
+    make_unique_finding_id,
     no_score_generated,
     prediction_status,
     record_edit_history,
     validate_quote_present,
+    update_finding,
+    validate_source,
+)
+from worker_intake_ai.research import (
+    UnavailableLiveSearchProvider,
+    export_research_json,
+    export_research_markdown,
+    make_authority_record,
+    normalize_research,
 )
 
 
@@ -268,3 +281,83 @@ def test_unsupported_document_type_and_pdf_behavior():
     assert "Information provided" in INFORMATION_STATUSES
     assert "Job advertisement" in SOURCE_TYPES
     assert "Interview notes" in SOURCE_TYPES
+
+
+def test_finding_ids_are_uuid_and_atomic_updates_preserve_identity_and_history():
+    row = ensure_review_row({"topic": "Scheduling", "source_type": "Worker account"})
+    uuid.UUID(row["finding_id"])
+    original_history = row["edit_history"]
+    updated = update_finding([row], row["finding_id"], {"interpretation": "Staff review"}, "staff-7")
+    assert updated[0]["finding_id"] == row["finding_id"]
+    assert row["interpretation"] == ""
+    assert row["edit_history"] is original_history
+    events = [e for e in updated[0]["edit_history"] if e["changed_field"] == "interpretation"]
+    assert len(events) == 1
+    assert events[0]["old_value"] == ""
+    assert events[0]["new_value"] == "Staff review"
+
+
+def test_manual_finding_ids_are_unique():
+    assert make_unique_finding_id() != make_unique_finding_id()
+
+
+def test_source_validation_separates_document_and_location():
+    row = {
+        "exact_quote": "A quoted sentence.",
+        "source_location": "page 2",
+        "source_type": "Contract",
+    }
+    result = validate_source(row, "intro\nA quoted sentence.", ["intro", "A quoted sentence."])
+    assert result["document_validation_status"] == "Match found"
+    assert result["location_validation_status"] == "Match found"
+    wrong = validate_source(row, "intro\nA quoted sentence.", ["intro", "different text"])
+    assert wrong["document_validation_status"] == "Match found"
+    assert wrong["location_validation_status"] == "Match not found"
+
+
+def test_legacy_invalid_status_and_source_remain_visible():
+    migrated = ensure_review_row(
+        {"topic": "Legacy", "source_type": "old-source", "information_status": "old-status"}
+    )
+    assert migrated["source_type"] == "Unknown"
+    assert migrated["legacy_original_source_type"] == "old-source"
+    assert migrated["legacy_original_information_status"] == "old-status"
+    assert migrated["migration_note"]
+
+
+def test_research_links_and_party_arguments_are_distinct_from_holdings():
+    authority = make_authority_record(
+        title="Fictional example authority",
+        url="https://example.test/authority",
+        holding="The fictional court held only the stated rule.",
+        party_arguments="The fictional party argued for a broader rule.",
+        is_fictional=True,
+    )
+    assert authority["url"].startswith("https://")
+    assert authority["holding"] != authority["party_arguments"]
+    markdown = export_research_markdown({"authorities": [authority]})
+    assert "Party arguments (not holdings)" in markdown
+    assert "[Fictional]" in markdown
+
+
+def test_research_verification_states_are_independent_and_unchecked_is_not_current_law():
+    authority = make_authority_record(citation_verification="Identity verified")
+    data = normalize_research({"authorities": [authority]})
+    saved = data["authorities"][0]
+    assert saved["citation_verification"] == "Identity verified"
+    assert saved["current_law_verification"] == "Unchecked"
+    assert "Current law verified" not in export_research_markdown(data)
+
+
+def test_research_export_persists_records_and_live_search_is_unavailable():
+    authority = make_authority_record(citation="Fictional citation", is_fictional=True)
+    research = {
+        "plan": {"issue": "Failure to hire", "search_scope": "Federal", "query": "fictional"},
+        "authorities": [authority],
+        "argument_examples": [{"text": "A fictional argument.", "label": "Fictional example"}],
+    }
+    payload = json.loads(export_research_json(research))
+    assert payload["authorities"][0]["citation"] == "Fictional citation"
+    assert payload["argument_examples"][0]["fictional"] is True
+    with pytest.raises(RuntimeError, match="unavailable"):
+        UnavailableLiveSearchProvider().search("anything")

@@ -42,3 +42,21 @@ Open the local address shown by Streamlit in the terminal.
 - Unknown and disputed values are preserved rather than converted to "no."
 - Applicant evidence types include job advertisements, application materials, interview notes, and recruitment/rejection messages.
 - This is not a production privacy or legal-determination system.
+
+## Authorities and arguments research module
+
+The research panel is a structured, manual record attached to the intake workflow. Staff
+select an issue and search scope, then record links, propositions, holdings, and party
+arguments separately. Citation identity and current-law status are independent
+verification states: an unchecked authority is never represented as verified current law.
+Live search is deliberately unavailable; the provider seam is narrow so a future
+CourtListener adapter can be reviewed without silently changing the intake workflow.
+
+Examples are explicitly fictional and this module does not invent cases or quotations.
+The design is informed by Tippett, Alexander, and colleagues, *Does Lawyering Matter?
+Predicting Judicial Decisions from Legal Briefs and What That Means for Access to Justice*:
+<https://texaslawreview.org/does-lawyering-matter-predicting-judicial-decisions-from-legal-briefs-and-what-that-means-for-access-to-justice/>.
+Predictive citation patterns in that study were descriptive findings, not proof that
+adding particular citations causes a win:
+are descriptive research signals—not causal recommendations, legal advice, or a
+substitute for current-law verification.
