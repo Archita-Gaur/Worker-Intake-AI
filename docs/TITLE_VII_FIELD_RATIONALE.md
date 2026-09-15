@@ -30,10 +30,14 @@ This section records worker descriptions of what happened, the basis alleged, an
 - Relevant statements, witnesses, documents, employer's stated reason, and treatment of others if known: these are facts for review and comparison.
 - Possible religious accommodation request and response, if relevant: relevant to Title VII and accommodation contexts, but not required for every intake.
 - Workplace policy or practice the worker identifies: preserves context without assuming a formal practice is proven.
+- Applicant/failure-to-hire path: records the position, advertised and applicant qualifications, application and rejection dates, hiring stages, relevant statements, employer's stated reason, and why discrimination is suspected. These are allegations and intake facts, not an automated determination.
+- Proposed role type: records whether the proposed role was employee, contractor, or unknown. For an applicant who never performed the work, proposed conditions are kept separate from actual work experience.
+- Applicant evidence sources: job advertisements, applications, interview notes, and recruitment or rejection messages are available as source types. A contract, comparator, prior work history with the employer, or document is not required to continue intake.
 
 Official source:
 - Title VII of the Civil Rights Act of 1964, https://www.eeoc.gov/statutes/title-vii-civil-rights-act-1964
 - EEOC guidance on threshold issues, https://www.eeoc.gov/laws/guidance/section-2-threshold-issues
+- EEOC, Prohibited Employment Policies/Practices, https://www.eeoc.gov/prohibited-employment-policiespractices
 
 ## 3. Harassment follow-up, when relevant
 
@@ -79,3 +83,7 @@ This prototype intentionally does not:
 - claim a validated model or external AI analysis
 
 The software therefore keeps legal conclusions out of automation and leaves judgment to staff review and separate legal analysis.
+
+## 7. Applicant and failure-to-hire design boundary
+
+The applicant path is a separate intake branch within the same evidence-review and export workflow. A fictional applicant example is provided for testing. The app preserves unknown and approximate dates, does not require a contract, comparator, work history with the employer, or documentary evidence, and does not infer discrimination, coverage, deadlines, or likelihood of success. The prediction panel remains unavailable; a future misclassification model must not score general failure-to-hire discrimination matters.

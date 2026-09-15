@@ -7,6 +7,7 @@ This repository contains a local research prototype for legal aid intake review.
 - Research prototype: synthetic examples only.
 - Staff can enter or load a fictional contract and worker intake notes.
 - Manual review table preserves source provenance and correction history.
+- Includes separate current-worker and applicant/failure-to-hire intake paths; applicant answers preserve proposed role conditions, unknowns, and approximate dates.
 - Prediction panel is explicitly unavailable and not fabricated.
 - Future AI extraction remains separate from statistical prediction.
 
@@ -39,4 +40,5 @@ Open the local address shown by Streamlit in the terminal.
 - Arbitrary documents never receive a fabricated result.
 - OCR is not implemented; scanned PDFs without extractable text are rejected with a clear message.
 - Unknown and disputed values are preserved rather than converted to "no."
+- Applicant evidence types include job advertisements, application materials, interview notes, and recruitment/rejection messages.
 - This is not a production privacy or legal-determination system.

@@ -13,7 +13,9 @@ from worker_intake_ai.logic import (
     extract_text_from_file,
     get_fixture_findings,
     get_source_text_for_row,
+    generate_title_vii_blank_form,
     make_finding_id,
+    parse_loaded_applicant_sample,
     parse_loaded_sample,
     prediction_status,
     record_edit_history,
@@ -46,7 +48,12 @@ def _ensure_rows(rows):
     for row in rows:
         prepared_row = ensure_review_row(row)
         quote_text = prepared_row.get("exact_quote", "")
-        source_text = get_source_text_for_row(prepared_row, st.session_state.get("contract_text", ""), st.session_state.get("worker_notes", ""))
+        source_text = get_source_text_for_row(
+            prepared_row,
+            st.session_state.get("contract_text", ""),
+            st.session_state.get("worker_notes", ""),
+            st.session_state.get("applicant_notes", ""),
+        )
         prepared_row["quote_validation_status"] = evaluate_quote_validation_status(quote_text, source_text)
         if not prepared_row.get("finding_id"):
             prepared_row["finding_id"] = make_finding_id(prepared_row.get("topic", ""), prepared_row.get("source_type", "Unknown"), prepared_row.get("source_location", ""), prepared_row.get("exact_quote", ""))
@@ -58,7 +65,36 @@ def load_example_into_session() -> None:
     sample = parse_loaded_sample()
     st.session_state["contract_text"] = sample["contract_text"]
     st.session_state["worker_notes"] = sample["worker_notes"]
+    st.session_state["applicant_notes"] = ""
+    st.session_state["title_vii_intake"] = generate_title_vii_blank_form()
     st.session_state["review_rows"] = _ensure_rows(get_fixture_findings(sample["contract_text"], sample["worker_notes"]))
+    if st.session_state["review_rows"]:
+        st.session_state["selected_finding_id"] = st.session_state["review_rows"][0]["finding_id"]
+
+def load_applicant_example_into_session() -> None:
+    sample = parse_loaded_applicant_sample()
+    st.session_state["contract_text"] = sample["contract_text"]
+    st.session_state["worker_notes"] = sample["worker_notes"]
+    st.session_state["applicant_notes"] = sample["applicant_notes"]
+    st.session_state["title_vii_intake"] = generate_title_vii_blank_form()
+    st.session_state["title_vii_intake"].update(
+        {
+            "applicant_status": "Applicant",
+            "proposed_role_type": "Employee",
+            "applicant_position": "Warehouse coordinator",
+            "advertised_qualifications": "Two years of scheduling experience.",
+            "applicant_qualifications": "Three years coordinating deliveries.",
+            "application_date": "2026-08-03",
+            "hiring_stages": "Application, phone screen, final interview.",
+            "applicant_relevant_statements": "The team wants someone who will fit the existing culture.",
+            "rejection_date": "Approximately 2026-08-14",
+            "applicant_employer_stated_reason": "Another candidate was selected.",
+            "why_applicant_suspects_discrimination": "Applicant wants staff to review whether the stated reason and interview statements relate to the reported basis.",
+        }
+    )
+    st.session_state["review_rows"] = _ensure_rows(
+        get_fixture_findings(sample["contract_text"], sample["worker_notes"], sample["applicant_notes"])
+    )
     if st.session_state["review_rows"]:
         st.session_state["selected_finding_id"] = st.session_state["review_rows"][0]["finding_id"]
 
@@ -67,9 +103,11 @@ def reset_session() -> None:
     for key in [
         "contract_text",
         "worker_notes",
+        "applicant_notes",
         "review_rows",
         "contract_file",
         "selected_finding_id",
+        "title_vii_intake",
     ]:
         st.session_state.pop(key, None)
 
@@ -89,14 +127,12 @@ if "contract_text" not in st.session_state:
     st.session_state["contract_text"] = ""
 if "worker_notes" not in st.session_state:
     st.session_state["worker_notes"] = ""
+if "applicant_notes" not in st.session_state:
+    st.session_state["applicant_notes"] = ""
 if "review_rows" not in st.session_state:
     st.session_state["review_rows"] = []
 if "title_vii_intake" not in st.session_state:
-    st.session_state["title_vii_intake"] = {
-        "work_relationship": "",
-        "alleged_discrimination": "",
-        "agency_contact": "",
-    }
+    st.session_state["title_vii_intake"] = generate_title_vii_blank_form()
 if "selected_finding_id" not in st.session_state and st.session_state.get("review_rows"):
     st.session_state["selected_finding_id"] = st.session_state["review_rows"][0]["finding_id"]
 
@@ -106,6 +142,7 @@ st.caption("This is a local legal-aid intake review prototype. No real client da
 with st.sidebar:
     st.subheader("Session controls")
     st.button("Load included fictional example", on_click=load_example_into_session)
+    st.button("Load fictional applicant example", on_click=load_applicant_example_into_session)
     st.button("Clear session", on_click=reset_session)
     st.markdown("- No uploads to external services.")
     st.markdown("- Session memory only; not a production privacy guarantee.")
@@ -141,6 +178,12 @@ with col2:
         height=240,
         help="Separate the interview account from the contract wording.",
     )
+st.text_area(
+    "Applicant materials / recruitment notes",
+    key="applicant_notes",
+    height=160,
+    help="Use this for job advertisements, applications, interview notes, or recruitment/rejection messages. It is especially relevant when the person never performed the proposed work.",
+)
 
 st.subheader("Review table")
 rows = _ensure_rows(st.session_state.get("review_rows", []))
@@ -188,7 +231,15 @@ if rows:
             rows[index]["interpretation"] = row.get("interpretation", "")
             rows[index]["information_status"] = row.get("information_status", "Unknown")
             rows[index]["review_status"] = row.get("review_status", "Unreviewed")
-            rows[index]["quote_validation_status"] = evaluate_quote_validation_status(rows[index].get("exact_quote", ""), get_source_text_for_row(rows[index], st.session_state.get("contract_text", ""), st.session_state.get("worker_notes", "")))
+            rows[index]["quote_validation_status"] = evaluate_quote_validation_status(
+                rows[index].get("exact_quote", ""),
+                get_source_text_for_row(
+                    rows[index],
+                    st.session_state.get("contract_text", ""),
+                    st.session_state.get("worker_notes", ""),
+                    st.session_state.get("applicant_notes", ""),
+                ),
+            )
     st.session_state["review_rows"] = rows
 else:
     st.info("No findings yet. Add one to start a manual review.")
@@ -208,7 +259,7 @@ if st.session_state.get("review_rows"):
     with st.expander("Selected finding details", expanded=True):
         selected_row["topic"] = st.text_input("Topic", value=selected_row.get("topic", ""), key=f"detail_topic_{selected_id}")
         selected_row["field"] = selected_row["topic"]
-        selected_row["source_type"] = st.selectbox("Source type", SOURCE_TYPES, index=SOURCE_TYPES.index(selected_row.get("source_type", "Unknown")) if selected_row.get("source_type", "Unknown") in SOURCE_TYPES else 5, key=f"detail_source_{selected_id}")
+        selected_row["source_type"] = st.selectbox("Source type", SOURCE_TYPES, index=SOURCE_TYPES.index(selected_row.get("source_type", "Unknown")) if selected_row.get("source_type", "Unknown") in SOURCE_TYPES else SOURCE_TYPES.index("Unknown"), key=f"detail_source_{selected_id}")
         selected_row["exact_quote"] = st.text_area("Exact quote", value=selected_row.get("exact_quote", ""), height=80, key=f"detail_quote_{selected_id}")
         selected_row["source_location"] = st.text_input("Source location", value=selected_row.get("source_location", ""), key=f"detail_location_{selected_id}")
         selected_row["interpretation"] = st.text_area("Interpretation", value=selected_row.get("interpretation", ""), height=110, key=f"detail_interpretation_{selected_id}")
@@ -217,7 +268,12 @@ if st.session_state.get("review_rows"):
         selected_row["follow_up_question"] = st.text_area("Follow-up question", value=selected_row.get("follow_up_question", ""), height=70, key=f"detail_followup_{selected_id}")
         selected_row["evidence_to_request"] = st.text_area("Evidence to request", value=selected_row.get("evidence_to_request", ""), height=70, key=f"detail_evidence_{selected_id}")
         selected_row["reviewer_identifier"] = st.text_input("Reviewer identifier (optional)", value=selected_row.get("reviewer_identifier", ""), key=f"detail_reviewer_{selected_id}")
-        source_text = get_source_text_for_row(selected_row, st.session_state.get("contract_text", ""), st.session_state.get("worker_notes", ""))
+        source_text = get_source_text_for_row(
+            selected_row,
+            st.session_state.get("contract_text", ""),
+            st.session_state.get("worker_notes", ""),
+            st.session_state.get("applicant_notes", ""),
+        )
         selected_row["quote_validation_status"] = evaluate_quote_validation_status(selected_row.get("exact_quote", ""), source_text)
         selected_row["finding_id"] = selected_row.get("finding_id") or make_finding_id(selected_row.get("topic", ""), selected_row.get("source_type", "Unknown"), selected_row.get("source_location", ""), selected_row.get("exact_quote", ""))
         previous = dict(st.session_state["review_rows"][selected_index])
@@ -233,6 +289,42 @@ if st.session_state.get("review_rows"):
             st.session_state["review_rows"][selected_index] = selected_row
 
 with st.expander("Completed Title VII intake answers", expanded=False):
+    relationship_options = ["Applicant", "Current worker", "Former worker", "Unknown"]
+    current_relationship = st.session_state["title_vii_intake"].get("applicant_status", "Unknown")
+    st.session_state["title_vii_intake"]["applicant_status"] = st.selectbox(
+        "Relationship to the employer",
+        relationship_options,
+        index=relationship_options.index(current_relationship) if current_relationship in relationship_options else 3,
+        key="title_vii_relationship",
+        help="Optional intake classification. Unknown is allowed and does not block continuation.",
+    )
+    if st.session_state["title_vii_intake"]["applicant_status"] == "Applicant":
+        st.caption("Applicant path: proposed conditions describe the role the person sought; they are not actual work experience.")
+        proposed_role_options = ["Employee", "Contractor", "Unknown"]
+        proposed_role = st.session_state["title_vii_intake"].get("proposed_role_type", "Unknown")
+        st.session_state["title_vii_intake"]["proposed_role_type"] = st.selectbox(
+            "Proposed role type",
+            proposed_role_options,
+            index=proposed_role_options.index(proposed_role) if proposed_role in proposed_role_options else 2,
+            key="title_vii_proposed_role_type",
+        )
+        applicant_fields = [
+            ("applicant_position", "Position sought"),
+            ("advertised_qualifications", "Advertised qualifications"),
+            ("applicant_qualifications", "Applicant's qualifications"),
+            ("application_date", "Application date or approximate date"),
+            ("hiring_stages", "Hiring stages"),
+            ("applicant_relevant_statements", "Relevant recruitment or interview statements"),
+            ("rejection_date", "Rejection date or approximate date"),
+            ("applicant_employer_stated_reason", "Employer's stated reason"),
+            ("why_applicant_suspects_discrimination", "Why the applicant suspects discrimination"),
+        ]
+        for field_name, label in applicant_fields:
+            st.session_state["title_vii_intake"][field_name] = st.text_area(
+                label,
+                value=st.session_state["title_vii_intake"].get(field_name, ""),
+                key=f"title_vii_{field_name}",
+            )
     st.session_state["title_vii_intake"]["work_relationship"] = st.text_area(
         "Work relationship and coverage",
         value=st.session_state["title_vii_intake"].get("work_relationship", ""),
@@ -252,7 +344,11 @@ with st.expander("Completed Title VII intake answers", expanded=False):
 st.caption("Missing is not 'no.' Retain source provenance and record corrections in the finding history.")
 
 st.subheader("Extraction provider")
-exp_provider = get_fixture_findings(st.session_state["contract_text"], st.session_state["worker_notes"])
+exp_provider = get_fixture_findings(
+    st.session_state["contract_text"],
+    st.session_state["worker_notes"],
+    st.session_state["applicant_notes"],
+)
 if exp_provider:
     st.success("Fixture provider: exact sample match found. Review the supplied findings and correct any issues before export.")
 else:
@@ -267,6 +363,7 @@ with st.expander("Working relationship and coverage", expanded=False):
         "- Scheduling, equipment, helpers, payment, expenses, duration, outside work, and relevant contract terms\n"
         "- Work location and employer type\n"
         "- Approximate employer size, source of estimate, and uncertainty"
+        "\n- For applicants: record proposed conditions separately from actual work experience; missing contract, comparator, work history, or documents do not block intake"
     )
 
 with st.expander("Alleged discrimination", expanded=False):
@@ -279,6 +376,8 @@ with st.expander("Alleged discrimination", expanded=False):
         "- Relevant statements, witnesses, documents, employer's stated reason, and treatment of others if known\n"
         "- Possible religious accommodation request and response, if relevant\n"
         "- Workplace policy or practice the worker identifies, if relevant"
+        "\n- For applicants: position, advertised and applicant qualifications, application and rejection dates, hiring stages, relevant statements, employer's stated reason, and why discrimination is suspected"
+        "\n- Applicant evidence sources may include job advertisements, applications, interview notes, and recruitment or rejection messages"
     )
 
 with st.expander("Harassment follow-up, when relevant", expanded=False):
@@ -313,6 +412,7 @@ json_blob = export_review_json(
     {
         "contract_text": st.session_state.get("contract_text", ""),
         "worker_notes": st.session_state.get("worker_notes", ""),
+        "applicant_notes": st.session_state.get("applicant_notes", ""),
         "title_vii_intake": st.session_state.get("title_vii_intake", {}),
     },
 )

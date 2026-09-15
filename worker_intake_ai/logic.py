@@ -36,6 +36,10 @@ SOURCE_TYPES = [
     "Message/email",
     "Other document",
     "Staff observation",
+    "Job advertisement",
+    "Application materials",
+    "Interview notes",
+    "Recruitment/rejection message",
     "Unknown",
 ]
 
@@ -61,6 +65,13 @@ SAMPLE_WORKER_NOTES = """
 INTAKE, answer 1: My supervisor assigns mandatory shifts each week.
 INTAKE, answer 2: I do not know whether I can send someone else to do the work.
 INTAKE, answer 3: I reported a coworker's repeated offensive comments to my supervisor. I have not yet described the comments or given dates.
+""".strip()
+
+SAMPLE_APPLICANT_NOTES = """
+JOB ADVERTISEMENT, listing 1: The warehouse coordinator role requests two years of scheduling experience.
+APPLICATION, submitted 2026-08-03: Applicant describes three years coordinating deliveries and asks about employee status.
+INTERVIEW NOTES, stage 2: Interviewer says the team wants someone who will fit the existing culture.
+RECRUITMENT MESSAGE, 2026-08-14: We selected another candidate after the final interview.
 """.strip()
 
 FIXTURE_FINDINGS: List[Dict[str, Any]] = [
@@ -138,6 +149,45 @@ FIXTURE_FINDINGS: List[Dict[str, Any]] = [
     },
 ]
 
+APPLICANT_FIXTURE_FINDINGS: List[Dict[str, Any]] = [
+    {
+        "finding_id": "finding-applicant-role",
+        "topic": "Proposed role and conditions",
+        "field": "Proposed role and conditions",
+        "source_type": "Job advertisement",
+        "creation_method": "fixture",
+        "exact_quote": "The warehouse coordinator role requests two years of scheduling experience.",
+        "source_location": "job advertisement, listing 1",
+        "interpretation": "The advertised role describes qualifications for a proposed position; the applicant did not perform this work.",
+        "information_status": "Information provided",
+        "review_status": "Unreviewed",
+        "follow_up_question": "Was the proposed role intended to be an employee, contractor, or is that unknown?",
+        "evidence_to_request": "Job advertisement and any classification or offer materials.",
+        "quote_validation_status": "Match found",
+        "migration_note": None,
+        "legacy_original_value": "The warehouse coordinator role requests two years of scheduling experience.",
+        "edit_history": [],
+    },
+    {
+        "finding_id": "finding-applicant-rejection",
+        "topic": "Failure to hire",
+        "field": "Failure to hire",
+        "source_type": "Recruitment/rejection message",
+        "creation_method": "fixture",
+        "exact_quote": "We selected another candidate after the final interview.",
+        "source_location": "recruitment message, 2026-08-14",
+        "interpretation": "The applicant reports a rejection after a final interview; this does not establish discrimination.",
+        "information_status": "Needs clarification",
+        "review_status": "Unreviewed",
+        "follow_up_question": "What statements or facts lead the applicant to suspect discrimination?",
+        "evidence_to_request": "Recruitment messages, interview notes, application, and any stated reason for rejection.",
+        "quote_validation_status": "Match found",
+        "migration_note": None,
+        "legacy_original_value": "We selected another candidate after the final interview.",
+        "edit_history": [],
+    },
+]
+
 
 def normalize_whitespace(value: Any) -> str:
     return " ".join(str(value or "").split())
@@ -170,14 +220,19 @@ def evaluate_quote_validation_status(quote: str, source_text: str) -> str:
     return "Match not found"
 
 
-def get_source_text_for_row(row: Dict[str, Any], contract_text: str, worker_notes: str) -> str:
+def get_source_text_for_row(
+    row: Dict[str, Any],
+    contract_text: str,
+    worker_notes: str,
+    applicant_notes: str = "",
+) -> str:
     source_type = row.get("source_type") or "Unknown"
     if source_type == "Contract":
         return contract_text
     if source_type == "Worker account":
         return worker_notes
-    if source_type == "Message/email":
-        return worker_notes
+    if source_type in {"Message/email", "Recruitment/rejection message", "Application materials", "Interview notes", "Job advertisement"}:
+        return applicant_notes or worker_notes
     if source_type == "Other document":
         return "\n".join(part for part in [contract_text, worker_notes] if part)
     if source_type == "Staff observation":
@@ -197,13 +252,30 @@ def parse_loaded_sample() -> Dict[str, str]:
         "worker_notes": SAMPLE_WORKER_NOTES,
     }
 
+def parse_loaded_applicant_sample() -> Dict[str, str]:
+    return {
+        "contract_text": "",
+        "worker_notes": "",
+        "applicant_notes": SAMPLE_APPLICANT_NOTES,
+    }
 
-def get_fixture_findings(contract_text: str, worker_notes: str) -> List[Dict[str, Any]]:
+
+def get_fixture_findings(
+    contract_text: str,
+    worker_notes: str,
+    applicant_notes: str = "",
+) -> List[Dict[str, Any]]:
     sample_docs = parse_loaded_sample()
     normalized_contract = normalize_whitespace(contract_text)
     normalized_worker = normalize_whitespace(worker_notes)
     if normalized_contract == normalize_whitespace(sample_docs["contract_text"]) and normalized_worker == normalize_whitespace(sample_docs["worker_notes"]):
         return [dict(row) for row in FIXTURE_FINDINGS]
+    if (
+        not normalized_contract
+        and not normalized_worker
+        and normalize_whitespace(applicant_notes) == normalize_whitespace(SAMPLE_APPLICANT_NOTES)
+    ):
+        return [dict(row) for row in APPLICANT_FIXTURE_FINDINGS]
     return []
 
 
@@ -488,7 +560,17 @@ def migrate_legacy_row(row: Dict[str, Any]) -> Dict[str, Any]:
 
 def generate_title_vii_blank_form() -> Dict[str, Any]:
     return {
-        "applicant_status": "unknown",
+        "applicant_status": "Unknown",
+        "proposed_role_type": "Unknown",
+        "applicant_position": "",
+        "advertised_qualifications": "",
+        "applicant_qualifications": "",
+        "application_date": "",
+        "hiring_stages": "",
+        "applicant_relevant_statements": "",
+        "rejection_date": "",
+        "applicant_employer_stated_reason": "",
+        "why_applicant_suspects_discrimination": "",
         "entities_involved": "",
         "who_hires_pays_assigns_supervises_ends": "",
         "scheduling": "",

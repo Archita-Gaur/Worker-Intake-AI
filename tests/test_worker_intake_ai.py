@@ -10,6 +10,8 @@ from worker_intake_ai.logic import (
     export_review_markdown,
     extract_text_from_file,
     get_fixture_findings,
+    parse_loaded_applicant_sample,
+    generate_title_vii_blank_form,
     intake_allows_missing_documents_or_comparator,
     migrate_legacy_row,
     no_score_generated,
@@ -210,6 +212,42 @@ def test_sample_fixture_rows_are_present_and_statuses_are_correct():
     assert all(row["review_status"] == "Unreviewed" for row in rows)
 
 
+def test_applicant_fixture_and_proposed_conditions_are_distinct():
+    sample = parse_loaded_applicant_sample()
+    rows = get_fixture_findings(
+        sample["contract_text"],
+        sample["worker_notes"],
+        sample["applicant_notes"],
+    )
+    assert len(rows) == 2
+    assert rows[0]["source_type"] == "Job advertisement"
+    assert "did not perform" in rows[0]["interpretation"]
+    assert rows[1]["source_type"] == "Recruitment/rejection message"
+    assert all(row["review_status"] == "Unreviewed" for row in rows)
+
+
+def test_applicant_answers_survive_complete_export_without_legal_conclusion():
+    intake = generate_title_vii_blank_form()
+    intake.update(
+        {
+            "applicant_status": "Applicant",
+            "proposed_role_type": "Unknown",
+            "applicant_position": "Warehouse coordinator",
+            "application_date": "Approximately August 3, 2026",
+            "rejection_date": "Unknown",
+            "applicant_qualifications": "Three years coordinating deliveries.",
+        }
+    )
+    payload = json.loads(export_review_json([], {"title_vii_intake": intake}))
+    exported = payload["intake_answers"]["title_vii_intake"]
+    assert exported["applicant_status"] == "Applicant"
+    assert exported["proposed_role_type"] == "Unknown"
+    assert exported["application_date"] == "Approximately August 3, 2026"
+    assert exported["rejection_date"] == "Unknown"
+    assert "score" not in json.dumps(payload).lower()
+    assert "calculate" not in json.dumps(payload).lower()
+
+
 def test_unsupported_document_type_and_pdf_behavior():
     try:
         extract_text_from_file("bad.txt", b"\xff\xff")
@@ -228,3 +266,5 @@ def test_unsupported_document_type_and_pdf_behavior():
     assert "Unknown" in SOURCE_TYPES
     assert "Reviewed" in REVIEW_STATUSES
     assert "Information provided" in INFORMATION_STATUSES
+    assert "Job advertisement" in SOURCE_TYPES
+    assert "Interview notes" in SOURCE_TYPES
