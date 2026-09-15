@@ -1,1 +1,62 @@
-# Worker-Intake-AI
+# Worker Intake AI
+
+This repository contains a local research prototype for legal aid intake review. It is intentionally limited to synthetic data and a manual review workflow for milestone 1.
+
+## Scope
+
+- Research prototype: synthetic examples only.
+- Staff can enter or load a fictional contract and worker intake notes.
+- Manual review table preserves source provenance and correction history.
+- Includes separate current-worker and applicant/failure-to-hire intake paths; applicant answers preserve proposed role conditions, unknowns, and approximate dates.
+- Prediction panel is explicitly unavailable and not fabricated.
+- Future AI extraction remains separate from statistical prediction.
+
+## Tested dependency versions
+
+The app was verified with the following versions:
+
+- Python 3.13.9
+- Streamlit 1.39.0
+- pypdf 5.1.0
+- pytest 8.3.3
+
+## Local startup
+
+1. Create a virtual environment:
+   python3 -m venv .venv
+   source .venv/bin/activate
+2. Install dependencies:
+   python -m pip install --upgrade pip
+   python -m pip install -r requirements.txt
+3. Run the app:
+   streamlit run app.py
+
+Open the local address shown by Streamlit in the terminal.
+
+## Design notes
+
+- Documents remain in session memory only.
+- The fixture extraction provider only supports the exact synthetic example included in `data/synthetic/`.
+- Arbitrary documents never receive a fabricated result.
+- OCR is not implemented; scanned PDFs without extractable text are rejected with a clear message.
+- Unknown and disputed values are preserved rather than converted to "no."
+- Applicant evidence types include job advertisements, application materials, interview notes, and recruitment/rejection messages.
+- This is not a production privacy or legal-determination system.
+
+## Authorities and arguments research module
+
+The research panel is a structured, manual record attached to the intake workflow. Staff
+select an issue and search scope, then record links, propositions, holdings, and party
+arguments separately. Citation identity and current-law status are independent
+verification states: an unchecked authority is never represented as verified current law.
+Live search is deliberately unavailable; the provider seam is narrow so a future
+CourtListener adapter can be reviewed without silently changing the intake workflow.
+
+Examples are explicitly fictional and this module does not invent cases or quotations.
+The design is informed by Tippett, Alexander, and colleagues, *Does Lawyering Matter?
+Predicting Judicial Decisions from Legal Briefs and What That Means for Access to Justice*:
+<https://texaslawreview.org/does-lawyering-matter-predicting-judicial-decisions-from-legal-briefs-and-what-that-means-for-access-to-justice/>.
+Predictive citation patterns in that study were descriptive findings, not proof that
+adding particular citations causes a win:
+are descriptive research signals—not causal recommendations, legal advice, or a
+substitute for current-law verification.

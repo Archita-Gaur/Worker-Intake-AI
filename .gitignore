@@ -1,0 +1,30 @@
+__pycache__/
+.pytest_cache/
+.venv/
+*.pyc
+*.pyo
+.streamlit/
+
+# Local secrets and credentials
+.env
+.env.*
+!.env.example
+credentials/
+**/credentials/
+*.pem
+*.key
+
+# Uploaded or private documents
+uploads/
+**/uploads/
+private/
+**/private/
+*.pdf
+
+# Generated intake exports and local reports
+exports/
+**/exports/
+generated/
+**/generated/
+intake_exports/
+**/intake_exports/
